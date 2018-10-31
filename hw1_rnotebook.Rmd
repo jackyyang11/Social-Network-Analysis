@@ -1,0 +1,259 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(igraph)
+library(data.table)
+library(network)
+library(tidyverse)
+setwd("C:/Users/Jacky Yang/Desktop/Social Network/hw1")
+data=read.csv('classroom_social_and_task_network.csv')
+```
+
+```{r}
+
+# question 1a --------------------------------------------------------------
+data=read.csv('classroom_social_and_task_network.csv')
+#social graph
+social<-data[,1:3]
+social_nozero<-social[social$social_tie != 0, ]
+
+social_edge<-cbind(social_nozero$ego,social_nozero$alter)
+g_social<-graph.data.frame(social_edge,directed = TRUE)
+E(g_social)$weight=as.numeric(social_nozero[,3])
+plot(g_social)
+#task graph
+task<-cbind(data[,1:2],data[,4])
+task_nozero<-task[task[,3]!= 0, ]
+task_edge<-cbind(task_nozero$ego,task_nozero$alter)
+g_task<-graph.data.frame(task_edge,directed = TRUE)
+E(g_task)$weight=as.numeric(task_nozero[,3])
+plot(g_task)
+
+```
+Degree 
+```{r}
+# question 1b --------------------------------------------------------------
+#indegree and outdegree
+Degree.Directed <- degree(g_social)
+Indegree <- degree(g_social, mode="in")
+Outdegree <- degree(g_social, mode="out")
+(CompareDegree <- cbind(Degree.Directed, Indegree, Outdegree))
+
+#indegree and outdegree
+Degree.Directed <- degree(g_task)
+Indegree <- degree(g_task, mode="in")
+Outdegree <- degree(g_task, mode="out")
+(CompareDegree <- cbind(Degree.Directed, Indegree, Outdegree))
+```
+Betweenness between two networks is the strongest correlated measure. It means that two networks both similar ratio of nodes acting as intermedias.
+```{r}
+
+#closeness
+(Closeness_social <- closeness(g_social))
+(Closeness_task <- closeness(g_task))
+#betweeness
+(Betweenness_social <- betweenness(g_social))
+(Betweenness_task <- betweenness(g_task))
+#pagerank
+(pagerank_social<-page_rank(g_social))
+(pagerank_task<-page_rank(g_task))
+#correlation
+cor(indegree_social,indegree_task)
+cor(outdegree_social,outdegree_task)
+cor(closeness_social,closeness_task)
+cor(betweenness_social,betweenness_task)
+
+```
+
+Visually display the weak and strong ties as red and green respectively.
+```{r}
+# question 2a --------------------------------------------------------------
+
+data=read.csv('classroom_social_and_task_network.csv')
+
+for (i in 1:nrow(data)){
+  data[i,5]<-data[i,3]+data[i,4]
+}
+data_nobothzero <- subset(data, data[,5]!= 0)
+
+for (i in 1:nrow(data_nobothzero)) {
+  if(data_nobothzero[i, 3] > social_mean) {
+    data_nobothzero[i,6]<-'strong'
+  } else if(data_nobothzero[i,4]>task_mean){
+    data_nobothzero[i,6]<-'strong'
+  }else{data_nobothzero[i,6]<-'weak'}
+}
+colnames(data_nobothzero)[5]<-"sum of ties"
+colnames(data_nobothzero)[6]<-"strength"
+
+g2_edge<-cbind(data_nobothzero$ego,data_nobothzero$alter)
+g2<-graph_from_edgelist(g2_edge,directed = TRUE)
+
+E(g2)$strength<-data_nobothzero$strength
+E(g2)$color[E(g2)$strength =='strong'] <- 'green'
+E(g2)$color[E(g2)$strength =='weak'] <- 'red'
+plot(g2,edge.arrow.size=0.3)
+
+```
+
+```{r}
+# question 2b mean-------------------------------------------------------------
+
+count<-0
+for (row in 1:22){
+  if ((1 %in% strong_m[row,]) & (sum(strong_m[row,])>=2)){
+    first_index<-which(strong_m[row,]==1)
+    for (index in 1:length(first_index)){
+      for (col in 1:length(first_index)){
+        if (mcdf4[first_index[index],first_index[col]]!=1){
+          count<-count+1
+        }
+      }
+        }
+      }
+}
+count<-count/2-10
+(paste("Number of ties that are violation of strong triadic closure is:",count))
+
+```
+
+There are still many triangles satisfying strong triadic closure, just less than the previous one using mean as judging criteria.
+```{r}
+# question 2b median ------------------------------------------------------
+data=read.csv('classroom_social_and_task_network.csv')
+
+for (i in 1:nrow(data)){
+  data[i,5]<-data[i,3]+data[i,4]
+}
+data_nobothzero <- subset(data, data[,5]!= 0)
+data_nobothzero
+for (i in 1:nrow(data_nobothzero)) {
+  if(data_nobothzero[i, 3] > social_median) {
+    data_nobothzero[i,6]<-'strong'
+  } else if(data_nobothzero[i,4]>task_median){
+    data_nobothzero[i,6]<-'strong'
+  }else{data_nobothzero[i,6]<-'weak'}
+}
+colnames(data_nobothzero)[5]<-"sum of ties"
+colnames(data_nobothzero)[6]<-"strength"
+
+g3_edge<-cbind(data_nobothzero$ego,data_nobothzero$alter)
+g3<-graph_from_edgelist(g3_edge,directed = TRUE)
+
+E(g3)$strength<-data_nobothzero$strength
+E(g3)$color[E(g3)$strength =='strong'] <- 'green'
+E(g3)$color[E(g3)$strength =='weak'] <- 'red'
+plot(g3,edge.arrow.size=0.3)
+
+
+strong<-subset(data_nobothzero,strength=='strong')
+
+strong_edge<-cbind(strong$ego,strong$alter)
+g_strong<-graph.edgelist(strong_edge,directed = TRUE)
+strong_m<-as_adjacency_matrix(g_strong)
+all_edge<-cbind(data_nobothzero$ego,data_nobothzero$alter)
+g_all<-graph.edgelist(all_edge,directed = TRUE)
+all_m<-as_adjacency_matrix(g_all)
+
+count_median<-0
+for (row in 1:22){
+  if ((1 %in% strong_m[row,]) & (sum(strong_m[row,])>=2)){
+    first_index<-which(strong_m[row,]==1)
+    for (index in 1:length(first_index)){
+      for (col in 1:length(first_index)){
+        if (all_m[first_index[index],first_index[col]]!=1){
+          count_median<-count_median+1
+        }
+      }
+    }
+  }
+}
+for (row in 1:22){
+  if ((1 %in% strong_m[row,]) & (sum(strong_m[row,])>=2)){
+    print(first_index<-which(strong_m[row,]==1))}}
+(count_median<-(count_median-35)/2)
+
+```
+
+
+Since correlations between edge betweenness and strength are negative and not highly correlated at the same time, high betweenness doesn't necessarily mean it would have strong ties. From the graph above, we can see that even if node 22 has high betweenness, it does not have too many strong ties.
+```{r}
+# question 3 --------------------------------------------------------------
+social<-edge_betweenness(g_social)
+social
+task<-edge_betweenness(g_task)
+task
+paste("correlation between edge betweenness and the strength of social ties is:",round(cor(social,social_nozero$social_tie),2))
+paste("correlation between edge betweenness and the strength of task ties is:",round(cor(task,task_nozero[,3]),2))
+
+#
+
+```
+
+I didn't exclude the completely isolated points 3.
+It's possible to verify the solution by visually looking at the graph I displayed above. 4 and 8 have 19 walks respectively. 3 have 21 walks. Thus, 19+19+21=59
+```{r}
+# question 4 --------------------------------------------------------------
+
+all<-data[,1:3]
+all_edge<-cbind(all$ego,all$alter)
+g_all<-graph.edgelist(all_edge,directed = TRUE)
+g_m<-as_adjacency_matrix(g_all)
+
+all_m<-social_m+task_m
+
+for (i in 1:21){
+ distance<-distance %*% all_m 
+}
+
+walks<-0
+for (j in 1:22){
+  for (k in 1:22){
+    if (distance[j,k]==0){
+      walks<-walks+1
+    }
+}
+}
+nowalks<-(walks-3)/2
+print(paste("number of pairs that have no walks is :",nowalks))
+```
+
+
+
+If the betweenness and closeness are calculated in the same way (same formula), the closeness relationships of ring would hold true and the betweenness relationship of star would hold true.
+```{r}
+# question 5 --------------------------------------------------------------
+ring=make_ring(30)
+star=make_star(4)
+
+max_ring=max(degree(ring))
+sum(max_ring-degree(ring))/((3-1)*(3-2))
+
+max_star=max(degree(star))
+sum(max_star-degree(star))/((4-1)*(4-2))
+
+closeness(ring)
+closeness(star)
+
+betweenness(ring)
+betweenness(star)
+
+plot(ring)
+plot(star)
+```
+
+
+
+
+
+
+
+
+
+
+
+
