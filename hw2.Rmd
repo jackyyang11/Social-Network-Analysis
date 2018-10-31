@@ -1,0 +1,413 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+load data
+```{r}
+#install.packages("readxl")
+#install.packages('splitstackshape')
+library(igraph)
+library(data.table)
+library(network)
+library(tidyverse)
+library(readxl)
+library(tidyr)
+library(splitstackshape)
+library(magrittr)
+library("zoo")
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+#install.packages("combinat")
+library('combinat')
+setwd("C:/Users/Jacky Yang/Desktop/Social Network/hw2")
+data1<-read.csv('Funding_events_7.14.csv',na.strings=c("","NA"))
+data1$Deal.Date <- as.Date(format(as.Date(data1$Deal.Date, format = "%m/%d/%y"), "%Y-%m-%d"))
+data2<-read_excel('Funding_events_7.14_page2.xlsx')
+data2$`Deal Date` <- as.Date(format(as.Date(data2$`Deal Date`), "%Y-%m-%d"))
+data2<-data.frame(data2)
+data3<-read.csv('Venture_capital_firm_outcomes.csv')
+edge_unique<-read.csv('edge_unique.csv')
+accmonth<-read.csv('accmonth.csv')
+graph<-read.csv('graph.csv')
+
+colnames(data2)<-colnames(data1)
+all<-rbind(data1,data2)
+```
+data cleaning and manipulation
+```{r}
+
+#data cleaning
+all<-all[!(is.na(all$Investors) | all$Investors==""), ]
+all$Investors<-gsub(", L.L.C","LLC",all$Investors)
+all$Investors<-gsub(", L.L.C.","LLC",all$Investors)
+all$Investors<-gsub(", Inc", "Inc", all$Investors)
+all$Investors<-gsub(", Inc.", "Inc", all$Investors)
+all$Investors<- gsub(", Ltd", "Ltd", all$Investors)
+all$Investors <- gsub(", LLC", "LLC", all$Investors)
+all$Investors <- gsub(", LP", "LP", all$Investors)
+all$Investors <- gsub(",Ltd", "Ltd", all$Investors)
+
+#split investors that are in the same row
+try<-cSplit(all, "Investors", ",", "long")
+#reduce columns
+try_short<-data.table(try[,1],try[,11],try[,4])
+#add number of month column
+#define number of month function
+d1 <- as.Date("01 March 1950", "%d %B %Y")    
+d2 <- as.Date(c("01 April 1955", "01 July 1980"), "%d %B %Y")
+
+elapsed_months <- function(end_date, start_date) {
+  ed <- as.POSIXlt(end_date)
+  sd <- as.POSIXlt(start_date)
+  12 * (ed$year - sd$year) + (ed$mon - sd$mon)
+}
+#add age of network column
+try_short$month<-elapsed_months(try_short$Deal.Date,"1981-6-1")
+try_short <- subset(try_short, select = c("Portfolio.Company.Name","Investors","Deal.Date","month"))
+```
+I define investors are tied together as long as they have invested in the same company once,  no matter if they invested in the same round or not
+```{r}
+# question 1a ----------------------------------------------------------------------
+##Intel Capital is the most central firm
+
+#select investors investing in the same company
+try_short[, min_two := .N > 1, by = `Portfolio.Company.Name`]
+try_short<-try_short[min_two==TRUE]
+
+#create edgelist of investor relationship
+new<-unique(try_short[,as.data.table(t(combn(Investors,2))), .(`Portfolio.Company.Name`)])
+edge_3row<-unique(new)
+edge_unique<-unique(new[,2:3])
+colnames(edge_unique)<-c("Investor 1","Investor 2")
+#create graph object
+g<-graph.data.frame(edge_unique)
+close<-closeness(g,mode="total")
+id=V(g)$name
+stats=as.data.table(list(id=id,close=close))
+#calculate highest closness and find out the node with that figure
+max_closeness<-stats[which.max(stats$close)]
+max_closeness
+```
+```{r}
+
+# question 1b -------------------------------------------------------------
+##It can be correctly verified that the firm with the highest closeness centrality also has the lowest
+##average path distance.
+
+#calculate shortest path
+distance<-shortest.paths(g,mode="all")
+bind<-rbind(edge_unique$`Investor 1`,edge_unique$`Investor 2`)
+bind_d<-data.frame(bind)
+
+bind_d_unique<-unique(unlist(bind_d[1:234705])) #delete duplicated investors
+unique_d<-data.frame(bind_d_unique)
+
+distance[!is.finite(distance)]<-13501 #total firm
+#verify if the firm with highest closeness have the lowest path
+min(rowMeans(distance))
+mean(distance["Intel Capital",])
+```
+
+```{r}
+# question 1c -------------------------------------------------------------
+##the number is high because there are a lot of nodes on the periphery that have low degree and closeness. It takes them many
+##steps to get to the center. Also, there are a lot of nodes that are unreachable, whose distance would be the total number 
+##of firms that are very high.
+mean(distance)
+```
+
+```{r}
+
+# question 2a -------------------------------------------------------------
+##age of network is defined as the month from beginning of the period, calculate all the investors relationships within that
+##certain month/age
+
+#split edgelist by month/age
+bydate<-split(try_short,by="month")
+#sort by age of network
+sort<-bydate[order(as.numeric(names(bydate)))]
+
+#create empty edgelist, month and mean list
+accmonth<-data.table()
+list_mean<-list()
+list_month<-list()
+for (row in 1:length(sort)){
+  #make sure there are at least two nodes within one month
+  j<-as.data.table(sort[row])
+  j[, min_two := .N > 1,by =j[,1]]
+  j<-j[min_two==TRUE]
+  #next if there are no more than two nodes within one month
+  if (nrow(j)<2){
+    next
+  }
+  colnames(j)<-c("Portfolio.Company.Name","Investors","Deal.Date","month","min_two")
+  #combinations of investors within same month
+  datecombn<-j[,as.data.table(t(combn(Investors,2))), .(`Portfolio.Company.Name`)]
+  #add new ties to previous month
+  accmonth<-rbind(accmonth,datecombn)
+  #calculate coreness
+  g_coreness<-graph.data.frame(accmonth)
+  cores = graph.coreness(as.undirected(g_coreness))
+  #add avg coreness to a list
+  list_mean<-c(list_mean,mean(cores))
+  thatmonth<-as.numeric(names(sort[row]))
+  list_month<-c(list_month,thatmonth)
+}
+#create dataframe from coreness mean and age of network
+graph_d<-data.frame(cbind(list_mean,list_month))
+df2 <- as.data.frame(lapply(graph_d, unlist))
+df2<-df2[order(df2$list_month),]
+#plot the graph
+ggplot(data=df2,aes(x=list_month,y=list_mean))+geom_line()+ylab("Avg Coerness")+xlab("Age of Network (month)")
+```
+I deleted decays by only selecting the relationships that are within 10 years. The graph is different that the coreness increases more rapidly when I delete the decays.
+```{r}
+# question 2b -------------------------------------------------------------
+bydate<-split(try_short,by="month")
+#sort by age of network
+sort<-bydate[order(as.numeric(names(bydate)))]
+#create empty edgelist, month and mean list to save the output from the for loop below
+accmonth2<-data.table()
+list_mean2<-list()
+list_month2<-list()
+for (row in 1:length(sort)){
+  #make sure there are at least two nodes within one month
+  k<-as.data.table(sort[row])
+  k[, min_two := .N > 1, by = k[,1]]
+  k = k[min_two==TRUE]
+  #next if there are no more than two nodes within one month
+  if (nrow(k)<2){
+    next
+  }
+  colnames(k)<-c("Portfolio.Company.Name","Investors","Deal.Date","month","min_two")
+  
+  #combinations of deal dates
+  datecombn3<-k[,as.data.table(t(combn(Investors,2))), by=list(`Portfolio.Company.Name`,`month`)]
+  colnames(datecombn3)<-c("Portfolio.Company.Name","month","investor1","investor2")
+  #add new ties to previous month
+  accmonth2<-rbind(datecombn3,accmonth2)
+  #accmonth2<-bind_rows(accmonth2,datecombn3)
+  colnames(accmonth2)<-c("Portfolio.Company.Name","month","investor1","investor2")
+  #delete decays
+  if (row-min(accmonth2$month)>120){
+    accmonth2<-accmonth2[!which(accmonth2$month<=(row-120)),]
+  }
+  #calculate coreness
+  g_coreness2<-graph.data.frame(accmonth2,directed = FALSE)
+  cores2 = graph.coreness(as.undirected(g_coreness2))
+  #add avg coreness to a list
+  list_mean2<-c(list_mean2,mean(cores2))
+  thatmonth2<-as.numeric(names(sort[row]))
+  list_month2<-c(list_month2,thatmonth2)
+}
+#make the list output usable
+graph_d2<-data.frame(cbind(list_mean2,list_month2))
+df6 <- as.data.frame(lapply(graph_d2, unlist))
+df6<-df6[order(df6$list_month2),]
+#plot the graph
+ggplot(data=df6,aes(x=list_month2,y=list_mean2))+geom_line()+ylab("Avg Coerness")+xlab("Age of Network (month)")
+ggplot(data=df2,aes(x=list_month,y=list_mean))+geom_line()+ylab("Avg Coerness")+xlab("Age of Network (month)")
+```
+
+```{r}
+
+# question3 ---------------------------------------------------------------
+## the recent network is more of a core-periphery structure.
+##descriptive evidence 1-from the graph, we can clearly see the network is more of a core-periphery structure
+#plot the edgelist graph
+g3<-graph.data.frame(accmonth[,2:3])
+# closeness<-closeness(g3,mode="total")
+# id=V(g3)$name
+# stats2=as.data.table(list(id=id,close=closeness))
+plot(g3,vertext.size=1,vertex.label=NA,edge.width=0.05)
+
+##descriptive evidence 2-more nodes have high closeness(above average closeness) than nodes having low closeness, which means
+##many nodes are concentrated together. Closeness is also divided into two groups, which means it's core-periphery structure
+##as pheriphery have a different average closeness from the core.
+closeness<-closeness(graph.data.frame(accmonth[,2:3]))
+closeness_d<-as.data.frame(closeness)
+row_d<-as.data.frame(rownames(closeness_d))
+
+together<-cbind(row_d,closeness_d)
+df3 <- as.data.frame(lapply(together, unlist))
+colnames(df3)<-c("investor","closeness")
+
+(closeness_p<-ggplot(data=df3,aes(x=investor,y=closeness))+geom_point())
+#show if more nodes have high closeness or not. If yes, it means it is more of a core-periphery structure.
+mean_close<-mean(df3$closeness)
+nrow(df3[df3$closeness>mean_close, ])
+nrow(df3[df3$closeness<mean_close, ])
+```
+
+```{r}
+
+# question 4 --------------------------------------------------------------
+
+try_short$Deal.Date<-format(as.Date(try_short$Deal.Date),"%Y")
+byyear<-split(try_short,by="Deal.Date")
+#sort by age of network
+sortyear<-byyear[order(as.numeric(names(byyear)))]
+
+# question 4a -------------------------------------------------------------
+## Being in the center of the network tend to have more successful investments as the number of successful investments is 
+## positively correlated with all four centralities-closeness, betweenness,degree and eigen
+#use the network in year of 2014
+j<-as.data.table(sortyear[32])
+j[, min_two := .N > 1,by =j[,1]]
+j<-j[min_two==TRUE]
+colnames(j)<-c("Portfolio.Company.Name","Investors","Deal.Date","month","min_two")
+datecombn3<-j[,as.data.table(t(combn(Investors,2))), .(`Portfolio.Company.Name`)]
+#closeness
+closeness3<-closeness(graph.data.frame(datecombn3[,2:3]))
+close_d<-data.frame(closeness3)
+row_d2<-as.data.frame(rownames(close_d))
+together2<-cbind(row_d2,close_d)
+df5 <- as.data.frame(lapply(together2, unlist))
+colnames(df5)<-c("firm_name","closeness")
+#betweenness
+betweenness3<-betweenness(graph.data.frame(datecombn3[,2:3]))
+between_d<-data.frame(betweenness3)
+row_d3<-as.data.frame(rownames(between_d))
+together3<-cbind(row_d3,between_d)
+df7 <- as.data.frame(lapply(together3, unlist))
+colnames(df7)<-c("firm_name","betweenness")
+#degree
+degree<-degree(graph.data.frame(datecombn3[,2:3]))
+degree_d<-data.frame(degree)
+row_d4<-as.data.frame(rownames(degree_d))
+together4<-cbind(row_d4,degree_d)
+df8 <- as.data.frame(lapply(together4, unlist))
+colnames(df8)<-c("firm_name","degree")
+#eigen_centrality
+eigen2<-eigen_centrality(graph.data.frame(datecombn3[,2:3]))
+eigen_d2<-data.frame(eigen2)
+row_d4<-as.data.frame(rownames(eigen_d2))
+together4<-cbind(row_d4,eigen_d2)
+df9 <- as.data.frame(lapply(together4, unlist))
+colnames(df9)<-c("firm_name","eigen")
+
+byinvestor<-data3 %>% 
+  group_by(firm_name,year) %>% 
+  summarise(successful_investments = sum(successful_investments),out_of_business=sum(out_of_business))
+byinvestor_d<-data.frame(byinvestor)
+#take only year of 2014 and merge with closeness dataframe
+investor_2014<-byinvestor_d[byinvestor_d$year=='2014',]
+#closeness merge
+merge<-merge(x = investor_2014, y = df5, by = "firm_name", all.x = TRUE)
+#betweenness merge
+merge_bt<-merge(x = investor_2014, y = df7, by = "firm_name", all.x = TRUE)
+#degree merge
+merge_degree<-merge(x = investor_2014, y = df8, by = "firm_name", all.x = TRUE)
+#eigen merge
+merge_eigen<-merge(x = investor_2014, y = df9, by = "firm_name", all.x = TRUE)
+
+#get rid of na rows
+merge<-na.omit(merge)
+merge_bt<-na.omit(merge_bt)
+merge_degree<-na.omit(merge_degree)
+merge_eigen<-na.omit(merge_eigen)
+#run correlation
+cor(merge$successful_investments,merge$closeness)
+cor(merge_bt$successful_investments,merge_bt$betweenness)
+cor(merge_degree$successful_investments,merge_degree$degree)
+cor(merge_eigen$successful_investments,merge_eigen$eigen)
+
+```
+
+```{r}
+
+# question 4b -------------------------------------------------------------
+## Being in the center of the network tend to be less likely to go out of business as the number of going out of business is 
+## negatively correlated with all four centralities-closeness, betweenness,degree and eigen
+#use the network in year of 2011
+j<-as.data.table(sortyear[29])
+j[, min_two := .N > 1,by =j[,1]]
+j<-j[min_two==TRUE]
+colnames(j)<-c("Portfolio.Company.Name","Investors","Deal.Date","month","min_two")
+datecombn3<-j[,as.data.table(t(combn(Investors,2))), .(`Portfolio.Company.Name`)]
+#closeness
+closeness3<-closeness(graph.data.frame(datecombn3[,2:3]))
+close_d<-data.frame(closeness3)
+row_d2<-as.data.frame(rownames(close_d))
+together2<-cbind(row_d2,close_d)
+df5 <- as.data.frame(lapply(together2, unlist))
+colnames(df5)<-c("firm_name","closeness")
+
+#betweenness
+betweenness3<-betweenness(graph.data.frame(datecombn3[,2:3]))
+between_d<-data.frame(betweenness3)
+row_d3<-as.data.frame(rownames(between_d))
+together3<-cbind(row_d3,between_d)
+df7 <- as.data.frame(lapply(together3, unlist))
+colnames(df7)<-c("firm_name","betweenness")
+#degree
+degree<-degree(graph.data.frame(datecombn3[,2:3]))
+degree_d<-data.frame(degree)
+row_d4<-as.data.frame(rownames(degree_d))
+together4<-cbind(row_d4,degree_d)
+df8 <- as.data.frame(lapply(together4, unlist))
+colnames(df8)<-c("firm_name","degree")
+#eigen_centrality
+eigen2<-eigen_centrality(graph.data.frame(datecombn3[,2:3]))
+eigen_d2<-data.frame(eigen2)
+row_d4<-as.data.frame(rownames(eigen_d2))
+together4<-cbind(row_d4,eigen_d2)
+df9 <- as.data.frame(lapply(together4, unlist))
+colnames(df9)<-c("firm_name","eigen")
+
+#take only year of 2011 and merge with closeness dataframe
+investor_2011<-byinvestor_d[byinvestor_d$year=='2011',]
+#closeness merge
+merge2<-merge(x = investor_2011, y = df5, by = "firm_name", all.x = TRUE)
+#betweenness merge
+merge_bt<-merge(x = investor_2011, y = df7, by = "firm_name", all.x = TRUE)
+#degree merge
+merge_degree<-merge(x = investor_2011, y = df8, by = "firm_name", all.x = TRUE)
+#eigen merge
+merge_eigen<-merge(x = investor_2011, y = df9, by = "firm_name", all.x = TRUE)
+
+#get rid of na rows
+merge2<-na.omit(merge2)
+merge_bt<-na.omit(merge_bt)
+merge_degree<-na.omit(merge_degree)
+merge_eigen<-na.omit(merge_eigen)
+#run correlation
+cor(merge2$out_of_business,merge2$closeness)
+cor(merge_bt$out_of_business,merge_bt$betweenness)
+cor(merge_degree$out_of_business,merge_degree$degree)
+cor(merge_eigen$out_of_business,merge_eigen$eigen)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
